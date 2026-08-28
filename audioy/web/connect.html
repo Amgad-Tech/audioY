@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audioY - connect a phone</title>
+<meta name="theme-color" content="#f5f3ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15140f" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="wrap wide">
+
+  <div class="masthead">
+    <h1>audioY</h1>
+    <span class="version">Version 3.0</span>
+  </div>
+  <p class="strap">This computer's sound, sent to a phone over the local network.</p>
+
+  <div class="notice" id="notice" hidden>
+    <p id="noticeText"></p>
+    <button id="noticeFix" type="button">Correct</button>
+  </div>
+
+  <h2>Connect a phone</h2>
+
+  <div class="code">
+    <img id="qr" src="qr.png" alt="QR code for this computer's address" width="220" height="220">
+    <div>
+      <p class="address" id="address">...</p>
+      <ol class="steps">
+        <li>Point the phone's camera at the code and open the link.</li>
+        <li>Tap once when the page asks. Safari will not play sound otherwise.</li>
+        <li>Connect the earphones as usual. The phone handles the Bluetooth.</li>
+      </ol>
+      <ul class="alts" id="alternates"></ul>
+    </div>
+  </div>
+
+  <h2>Status</h2>
+
+  <table class="facts">
+    <tbody>
+      <tr><th>Capturing</th><td id="factSource">...</td></tr>
+      <tr><th>Output device</th><td id="factOutput">...</td></tr>
+      <tr><th>Phones connected</th><td id="factListeners">0</td></tr>
+      <tr><th>Stream</th><td id="factFormat">...</td></tr>
+    </tbody>
+  </table>
+
+  <div class="fineprint">
+    <p>The phone has to be on the same network as this computer. A guest Wi-Fi
+       network will not reach it.</p>
+    <p>If nothing loads on the phone, allow audioY through Windows Firewall on
+       private networks.</p>
+    <p>audioY keeps running in the notification area. Right click its icon to
+       show this page again or to quit.</p>
+  </div>
+
+</div>
+
+<script src="connect.js"></script>
+</body>
+</html>

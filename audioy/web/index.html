@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>audioY</title>
+<meta name="theme-color" content="#f5f3ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15140f" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="audioY">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <h1>audioY</h1>
+    <span class="version">Version 3.0</span>
+  </div>
+  <p class="strap" id="source">Waiting for the computer.</p>
+
+  <div class="notice" id="notice" hidden>
+    <p id="noticeText"></p>
+    <button id="noticeFix" type="button">Correct</button>
+  </div>
+
+  <button class="switch" id="switch" type="button">Listen</button>
+  <p class="readout" id="readout">Not started</p>
+
+  <h2>Readings</h2>
+
+  <div class="reading">
+    <span class="name">Buffer</span>
+    <span class="gauge"><i id="bufferBar"></i></span>
+    <span class="value"><span id="bufferMs">0</span> ms</span>
+  </div>
+  <div class="reading">
+    <span class="name">Level</span>
+    <span class="gauge"><i id="levelBar"></i></span>
+    <span class="value"><span id="levelDb">--</span> dB</span>
+  </div>
+
+  <h2>Controls</h2>
+
+  <div class="control">
+    <span class="name">Volume</span>
+    <input id="volume" type="range" min="0" max="150" step="1" value="100">
+    <output id="volumeOut">100%</output>
+  </div>
+  <div class="control">
+    <span class="name">Delay</span>
+    <input id="delay" type="range" min="80" max="700" step="20" value="200">
+    <output id="delayOut">200 ms</output>
+  </div>
+  <label class="check">
+    <input id="adaptive" type="checkbox" checked>
+    <span>Raise the delay by itself after a dropout</span>
+  </label>
+  <label class="check">
+    <input id="wakelock" type="checkbox" checked>
+    <span>Keep the screen on</span>
+  </label>
+  <label class="check">
+    <input id="background" type="checkbox">
+    <span>Try to keep playing with the screen off <span class="aside">(unreliable)</span></span>
+  </label>
+
+  <h2>Stream</h2>
+
+  <table class="facts">
+    <tbody>
+      <tr><th>Format</th><td id="factFormat">--</td></tr>
+      <tr><th>Data rate</th><td id="factRate">--</td></tr>
+      <tr><th>Dropouts</th><td id="factDrops">0</td></tr>
+      <tr><th>Running</th><td id="factUptime">0:00</td></tr>
+    </tbody>
+  </table>
+
+  <div class="fineprint">
+    <p>Share, then Add to Home Screen, to keep this one tap away.</p>
+    <p>Do not open anything that uses the microphone while listening. iOS drops
+       the earphones to call quality and does not put them back.</p>
+  </div>
+
+</div>
+
+<div class="curtain" id="curtain" hidden>
+  <span class="big">Tap to start</span>
+  <span class="rule"></span>
+  <span class="small">Safari will not play sound until the page is touched once.</span>
+</div>
+
+<audio id="sink" playsinline></audio>
+<script src="player.js"></script>
+</body>
+</html>
