@@ -98,10 +98,8 @@ That is fine for music, podcasts and anything you are only listening to. Video
 will look out of sync unless the player can shift its audio. It is not usable
 for games.
 
-The Delay control is a trade. Lower is more responsive but more likely to break
-up. Leave "Raise the delay by itself after a dropout" ticked and it will find a
-working value on its own: every dropout adds 60 ms, and every 45 seconds
-without one gives 20 ms back.
+The Delay control is a trade. Lower is more responsive, higher survives a worse
+network. 200 ms suits most Wi-Fi. Raise it if the Dropouts counter climbs.
 
 ## What the readings mean
 
@@ -115,7 +113,13 @@ the output device is muted or turned down.
 
 **Dropouts** counts the times the queue ran dry or overflowed and had to be
 restarted. A few over a long session is normal. A number that climbs steadily
-means the Delay is too low.
+means the Delay is too low. The computer going quiet is not counted: loopback
+capture sends nothing at all when nothing is playing.
+
+**Clock correction** is how much faster or slower than normal the phone is
+playing to keep the queue at the Delay setting. It should read a few
+thousandths of a percent. Parked at 0.300% means the phone cannot keep up with
+the stream and the delay will keep being reset.
 
 ## Options
 
@@ -146,16 +150,30 @@ a single file of about 30 MB.
 
 ## Notes for anyone reading the code
 
-- Playback on the phone schedules each 40 ms chunk as its own
-  `AudioBufferSourceNode` on the Web Audio clock. `AudioWorklet` would be
-  neater but it only works in a secure context, and this page is plain HTTP on
-  the local network.
-- The PC's sound clock and the phone's are never exactly the same speed. Left
-  alone the queue would slowly drain or overflow, so the player trims playback
-  speed by up to 2% to hold the buffer at the target instead of resyncing.
-- WASAPI loopback delivers nothing at all while no application is playing, so
-  the server sends silence at real-time pace to fill the gaps. Without that the
-  start of every sound would be cut off while the phone refilled its buffer.
+- Audio arrives in 40 ms chunks and goes into a ring buffer
+  (`audioy/web/ring.js`) that one `ScriptProcessor` reads back as a single
+  continuous stream, through a fractional read position with linear
+  interpolation. There are no chunk boundaries to click, nothing can ever play
+  on top of anything else, and any difference between the two sample rates is
+  absorbed there. `AudioWorklet` would be the modern choice but it needs a
+  secure context, and this page is plain HTTP on the local network.
+- The PC's sound clock and the phone's are never exactly the same speed. The
+  player reads up to 0.3% faster or slower to hold the queue at the Delay
+  setting, which is below what an ear hears as a pitch change. Anything larger
+  than that is a jump back to the target, not a speed change, because a
+  noticeable pitch shift is worse than one skip.
+- Browsers sometimes skip an audio block when the page is busy or in the
+  background, and do not say so: `AudioProcessingEvent.playbackTime` just
+  counts up regardless. The player compares `currentTime` against the blocks it
+  was actually asked for, and throws away the audio the skipped blocks would
+  have played. Without that, every stall permanently adds to the delay.
+- The AudioContext is created without a `sampleRate`. Forcing one that differs
+  from the hardware makes iOS crackle, worst of all over Bluetooth.
+- WASAPI loopback delivers nothing at all while no application is playing. The
+  stream simply pauses; the phone plays silence and refills when it resumes.
+  Padding the gaps with silence on the PC side sounds like the obvious fix, but
+  it raced real audio whenever the PC was busy and put silence in the middle of
+  songs.
 - Do not open anything that uses the microphone on the phone while listening.
   iOS switches Bluetooth earphones to the 16 kHz call profile as soon as
   anything asks for input, and the sound stays bad until it is closed.
@@ -173,7 +191,8 @@ audioy/server.py     HTTP and WebSocket
 audioy/tray.py       notification area icon and menu
 audioy/net.py        finding the LAN address, making the QR code
 audioy/web/          the two pages: the phone player and the connection page
-scripts/             icon generation and two diagnostics
+audioy/web/ring.js    the jitter buffer, the part worth reading
+scripts/             icon generation, diagnostics, and the ring buffer check
 build.bat            builds dist\audioY.exe
 ```
 
@@ -193,6 +212,18 @@ somewhere else.
 | `GET /api/devices` | the loopback devices available |
 | `GET,POST /api/volume` | read or set the output device volume and mute |
 | `POST /api/restart` | reopen the capture |
+
+## Checking a change
+
+```bash
+node scripts/check_ring.js
+```
+
+Runs the jitter buffer through ten minutes of Wi-Fi jitter, a phone at a
+different sample rate, twenty minutes of clock drift, an overflow, a dropout,
+and a phone that skips 1% of its audio blocks. It asserts there are no clicks,
+that the pitch is right, and that the delay does not creep. It takes a few
+seconds and needs nothing installed.
 
 ## Licence
 

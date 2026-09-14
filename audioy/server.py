@@ -5,7 +5,6 @@ import asyncio
 import os
 import sys
 import threading
-import time
 
 from aiohttp import WSMsgType, web
 
@@ -43,7 +42,6 @@ class Server:
         self.on_change = on_change or (lambda: None)
 
         self.listeners = set()
-        self.last_chunk = time.monotonic()
 
         self._loop = None
         self._thread = threading.Thread(target=self._run, name="server", daemon=True)
@@ -71,32 +69,11 @@ class Server:
     # -- internals ---------------------------------------------------------
 
     def _publish(self, pcm):
-        self.last_chunk = time.monotonic()
+        # No silence is sent when the computer goes quiet. The phone's buffer
+        # handles gaps, and padding here raced real audio when the computer
+        # was busy, putting silence in the middle of songs.
         for listener in self.listeners:
             listener.push(pcm)
-
-    async def _fill_silence(self):
-        """Loopback capture stops entirely when nothing is playing. Keep the
-        stream running at real time so the phone's buffer never drains."""
-        while True:
-            await asyncio.sleep(0.01)
-            if not self.listeners:
-                self.last_chunk = time.monotonic()
-                continue
-
-            chunk_seconds = audio.CHUNK_MS / 1000.0
-            behind = time.monotonic() - self.last_chunk
-            if behind < chunk_seconds * 2:
-                continue
-
-            # Emit exactly as many chunks as the gap is worth, and advance the
-            # clock by that much rather than to "now", so pacing stays exact.
-            count = int(behind / chunk_seconds)
-            quiet = self.capture.silence()
-            for listener in self.listeners:
-                for _ in range(count):
-                    listener.push(quiet)
-            self.last_chunk += count * chunk_seconds
 
     def _run(self):
         loop = asyncio.new_event_loop()
@@ -120,12 +97,10 @@ class Server:
         site = web.TCPSite(runner, "0.0.0.0", self.port, reuse_address=True)
         loop.run_until_complete(site.start())
 
-        filler = loop.create_task(self._fill_silence())
         self._ready.set()
         try:
             loop.run_forever()
         finally:
-            filler.cancel()
             loop.run_until_complete(runner.cleanup())
             loop.close()
 

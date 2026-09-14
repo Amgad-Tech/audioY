@@ -58,10 +58,6 @@
     <output id="delayOut">200 ms</output>
   </div>
   <label class="check">
-    <input id="adaptive" type="checkbox" checked>
-    <span>Raise the delay by itself after a dropout</span>
-  </label>
-  <label class="check">
     <input id="wakelock" type="checkbox" checked>
     <span>Keep the screen on</span>
   </label>
@@ -77,6 +73,7 @@
       <tr><th>Format</th><td id="factFormat">--</td></tr>
       <tr><th>Data rate</th><td id="factRate">--</td></tr>
       <tr><th>Dropouts</th><td id="factDrops">0</td></tr>
+      <tr><th>Clock correction</th><td id="factSpeed">--</td></tr>
       <tr><th>Running</th><td id="factUptime">0:00</td></tr>
     </tbody>
   </table>
@@ -96,6 +93,7 @@
 </div>
 
 <audio id="sink" playsinline></audio>
+<script src="ring.js"></script>
 <script src="player.js"></script>
 </body>
 </html>

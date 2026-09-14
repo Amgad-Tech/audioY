@@ -5,8 +5,8 @@ virtual cable and no extra drivers. Two things about it are worth knowing:
 
   * the tap happens after Windows applies the output device's volume and mute,
     so a muted device captures pure silence
-  * it delivers nothing at all while no application is playing, which is why
-    the server has to fill the quiet stretches itself
+  * it delivers nothing at all while no application is playing, so the
+    stream simply pauses and the phone plays silence until it resumes
 """
 
 import sys
@@ -158,10 +158,6 @@ class Capture:
             "peak": round(self.peak, 4),
             "frames": self.frames,
         }
-
-    def silence(self):
-        """One chunk of silence in the current format."""
-        return bytes(self.chunk_frames * self.channels * 2)
 
     def _pick_device(self, p):
         if self.device is not None:
