@@ -1,9 +1,11 @@
 /* audioY player.
  *
- * 16-bit PCM chunks come off a WebSocket into a Ring (ring.js), and a single
- * ScriptProcessor reads it back as one continuous stream. AudioWorklet would
- * be the modern choice but it needs a secure context, and this page is plain
- * http on the local network.
+ * 16-bit PCM chunks come off a WebSocket into a Ring (ring.js), which
+ * resamples them to the phone's rate. Blocks are then handed to the audio
+ * hardware ahead of time, so playback does not depend on this thread staying
+ * responsive: a busy moment only eats into the cushion instead of producing a
+ * gap. The ring joins blocks seamlessly, so they play at normal speed and
+ * nothing has to be stretched.
  */
 
 var $ = function (id) { return document.getElementById(id); };
@@ -29,7 +31,6 @@ var player = {
   input: null,
   gain: null,
   analyser: null,
-  node: null,
   streamOut: null,
   format: null,
   ring: null,
@@ -38,15 +39,16 @@ var player = {
   rateKbps: 0,
   startedAt: 0,
   lastChunkAt: 0,
-  lastBlockAt: 0,
-  owed: 0,
+  playHead: 0,       // audio clock time the next block starts at
+  filling: true,     // building the cushion back up before playing
   attempts: 0,
   retryTimer: null,
   wakeLock: null
 };
 
 var MAX_DELAY = 700;
-var SETTINGS = 'audioy.2';   // v1 saved delays that its own bugs had inflated
+var SETTINGS = 'audioy.3';   // older versions saved delays that no longer mean
+                             // the same thing, so start them fresh
 
 /* --- settings ----------------------------------------------------------- */
 
@@ -102,45 +104,10 @@ function buildGraph() {
   input.connect(analyser);
   input.connect(gain);
 
-  // 4096 frames is about 85 ms a block: enough slack that a busy moment on
-  // the phone's main thread does not starve the output.
-  var node = ctx.createScriptProcessor(4096, 1, 2);
-  node.onaudioprocess = function (e) {
-    var out = [e.outputBuffer.getChannelData(0), e.outputBuffer.getChannelData(1)];
-    if (!player.running || !player.ring) {
-      out[0].fill(0);
-      out[1].fill(0);
-      return;
-    }
-    var rate = player.format.sampleRate;
-    var step = rate / ctx.sampleRate;
-    var n = out[0].length;
-
-    // If the output clock moved on further than the blocks we were asked for,
-    // the browser skipped some (a stalled or throttled page). Drop the audio
-    // they would have played, or every stall adds to the delay for good.
-    // e.playbackTime cannot be used for this: Chrome just counts it up.
-    var now = ctx.currentTime;
-    if (player.lastBlockAt) {
-      player.owed += (now - player.lastBlockAt) * ctx.sampleRate - n;
-      if (player.owed > n) {
-        var blocks = Math.floor(player.owed / n);
-        player.ring.discard(blocks * n * step);
-        player.owed -= blocks * n;
-      }
-      player.owed = Math.max(player.owed, -2 * n);
-    }
-    player.lastBlockAt = now;
-
-    player.ring.pull(out, Number(ui.delay.value) / 1000 * rate, step);
-  };
-  node.connect(input);
-
   player.ctx = ctx;
   player.input = input;
   player.gain = gain;
   player.analyser = analyser;
-  player.node = node;   // keep a reference, old Safari collects it otherwise
 
   applyVolume();
   routeOutput();
@@ -187,22 +154,77 @@ function applyVolume() {
   if (player.gain) player.gain.gain.value = Number(ui.volume.value) / 100;
 }
 
+/* --- handing blocks to the hardware ------------------------------------- */
+
+// One network chunk per block. The cushion can absorb a busy moment of up to
+// (delay - BLOCK_MS), so keeping blocks small keeps that tolerance high.
+var BLOCK_MS = 40;
+
+// Keeps the hardware supplied up to `delay` ahead of the audio clock. Called
+// whenever a chunk arrives and from a timer, so neither one alone has to be
+// punctual.
+function pump() {
+  if (!player.running || !player.ctx || !player.ring) return;
+
+  var ctx = player.ctx;
+  var ring = player.ring;
+  var rate = player.format.sampleRate;
+  var step = rate / ctx.sampleRate;
+  var target = Number(ui.delay.value) / 1000;
+  var blockFrames = Math.round(BLOCK_MS / 1000 * ctx.sampleRate);
+  var now = ctx.currentTime;
+
+  if (player.playHead <= now) {
+    // The cushion ran out. Anything still scheduled has already played.
+    if (!player.filling) {
+      player.filling = true;
+      // The computer going quiet is not a dropout; loopback capture simply
+      // sends nothing at all when nothing is playing.
+      if (Date.now() - player.lastChunkAt < 1000) player.drops++;
+    }
+    player.playHead = now;
+  }
+
+  // Wait for a full cushion before starting, otherwise it starts by stuttering.
+  if (player.filling) {
+    if (ring.available() < target * rate) return;
+    player.playHead = now + 0.02;
+    player.filling = false;
+    // Start at exactly the target, not at whatever piled up while refilling,
+    // or every dropout would leave the delay a little longer than before.
+    ring.trim((target - 0.02) * rate);
+  }
+
+  // Hand over everything the ring has, in blocks, so that what is waiting to
+  // play sits with the hardware rather than here. That is what a busy moment
+  // on this thread eats into instead of the sound.
+  var least = Math.round(0.01 * ctx.sampleRate);
+  while (player.playHead - ctx.currentTime < target) {
+    var room = Math.floor((ring.available() - 2) / (step * 1.01));
+    var frames = Math.min(blockFrames, room);
+    if (frames < least) break;
+
+    var buffer = ctx.createBuffer(2, frames, ctx.sampleRate);
+    var out = [buffer.getChannelData(0), buffer.getChannelData(1)];
+    var queued = (player.playHead - ctx.currentTime) * rate;
+    if (!ring.pull(out, step, queued, target * rate)) break;
+
+    var source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(player.input);
+    source.start(player.playHead);
+    player.playHead += frames / ctx.sampleRate;
+  }
+}
+
 /* --- incoming audio --------------------------------------------------- */
 
 function onChunk(raw) {
   player.bytes += raw.byteLength;
-  var ring = player.ring;
-  if (!ring) return;
-
-  var now = Date.now();
-  if (ring.dry) {
-    // A short gap is the network hiccuping. A long one is just the computer
-    // going quiet, which loopback capture reports as no data at all.
-    if (now - player.lastChunkAt < 1000) player.drops++;
-    ring.dry = false;
-  }
-  player.lastChunkAt = now;
-  ring.push(new Int16Array(raw));
+  if (!player.ring) return;
+  player.lastChunkAt = Date.now();
+  player.ring.push(new Int16Array(raw));
+  pump();
 }
 
 /* --- connection --------------------------------------------------------- */
@@ -256,9 +278,8 @@ function begin() {
   player.drops = 0;
   player.bytes = 0;
   player.startedAt = Date.now();
-  if (player.ring) player.ring.starved = true;   // start from a full buffer
-  player.lastBlockAt = 0;
-  player.owed = 0;
+  player.playHead = 0;
+  player.filling = true;
 
   ui.swtch.classList.add('on');
   ui.swtch.textContent = 'Stop';
@@ -273,6 +294,7 @@ function begin() {
 
 function halt() {
   player.running = false;
+  player.filling = true;
   ui.swtch.classList.remove('on');
   ui.swtch.textContent = 'Listen';
   if (player.ctx) player.ctx.suspend();
@@ -377,8 +399,10 @@ var lastTick = Date.now();
 
 setInterval(function () {
   var ring = player.ring;
-  var ms = (ring && player.running && !ring.starved)
-    ? Math.round(ring.available() / ring.rate * 1000) : 0;
+  var ahead = (player.ctx && !player.filling)
+    ? Math.max(0, player.playHead - player.ctx.currentTime) : 0;
+  var ms = (ring && player.running)
+    ? Math.round((ring.available() / ring.rate + ahead) * 1000) : 0;
   ui.bufferMs.textContent = ms;
   ui.bufferBar.style.width = Math.min(100, ms / MAX_DELAY * 100) + '%';
   ui.bufferBar.className = (player.running && ms < 40) ? 'bad' : '';
@@ -408,6 +432,7 @@ setInterval(function () {
   ui.factDrops.textContent = player.drops + (ring ? ring.skips : 0);
   ui.factSpeed.textContent = (ring && player.running)
     ? ((ring.speed - 1) * 100).toFixed(3) + '%' : '--';
+  if (player.running) pump();   // backstop if chunks stop arriving
 
   var seconds = player.running
     ? Math.floor((now - player.startedAt) / 1000) : 0;

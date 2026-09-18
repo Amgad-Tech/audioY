@@ -91,15 +91,18 @@ Around 300 to 450 ms end to end:
 | where it goes | roughly |
 | --- | --- |
 | capture and network | 20 to 40 ms |
-| the Delay setting on the phone | 80 to 700 ms, starts at 200 |
+| the Delay setting on the phone | 120 to 700 ms, starts at 300 |
 | the Bluetooth link to the earphones | 150 ms, fixed |
 
 That is fine for music, podcasts and anything you are only listening to. Video
 will look out of sync unless the player can shift its audio. It is not usable
 for games.
 
-The Delay control is a trade. Lower is more responsive, higher survives a worse
-network. 200 ms suits most Wi-Fi. Raise it if the Dropouts counter climbs.
+The Delay control is a trade, and it buys more than network slack. Audio is
+handed to the phone's sound hardware up to that far ahead, so it is also how
+long the phone can be busy with something else before you hear a gap. A phone
+under load stalls for a couple of hundred milliseconds fairly often, which is
+why the default is 300 ms. Raise it if the Dropouts counter climbs.
 
 ## What the readings mean
 
@@ -151,22 +154,24 @@ a single file of about 30 MB.
 ## Notes for anyone reading the code
 
 - Audio arrives in 40 ms chunks and goes into a ring buffer
-  (`audioy/web/ring.js`) that one `ScriptProcessor` reads back as a single
-  continuous stream, through a fractional read position with linear
-  interpolation. There are no chunk boundaries to click, nothing can ever play
-  on top of anything else, and any difference between the two sample rates is
-  absorbed there. `AudioWorklet` would be the modern choice but it needs a
-  secure context, and this page is plain HTTP on the local network.
+  (`audioy/web/ring.js`), which resamples to whatever rate the phone is using
+  through a fractional read position with linear interpolation. The read
+  position carries across blocks, so consecutive blocks join seamlessly and
+  there are no chunk boundaries to click.
+- Blocks are then handed to the sound hardware ahead of time and play at normal
+  speed. Nothing is stretched, and the play position never moves backwards, so
+  two pieces of audio can never overlap. The important part is that playback
+  does not depend on the page's own thread staying responsive: a busy moment
+  eats into the cushion instead of making a hole in the sound. Driving playback
+  from the page thread with a `ScriptProcessor` was tried and is much worse on
+  a phone, because every stall is immediately audible. `AudioWorklet` would fix
+  that properly, but it needs a secure context and this page is plain HTTP on
+  the local network.
 - The PC's sound clock and the phone's are never exactly the same speed. The
-  player reads up to 0.3% faster or slower to hold the queue at the Delay
+  ring reads up to 0.3% faster or slower to hold the queue at the Delay
   setting, which is below what an ear hears as a pitch change. Anything larger
-  than that is a jump back to the target, not a speed change, because a
-  noticeable pitch shift is worse than one skip.
-- Browsers sometimes skip an audio block when the page is busy or in the
-  background, and do not say so: `AudioProcessingEvent.playbackTime` just
-  counts up regardless. The player compares `currentTime` against the blocks it
-  was actually asked for, and throws away the audio the skipped blocks would
-  have played. Without that, every stall permanently adds to the delay.
+  is a single cut back to the target, not a speed change, because a noticeable
+  pitch shift is worse than one skip.
 - The AudioContext is created without a `sampleRate`. Forcing one that differs
   from the hardware makes iOS crackle, worst of all over Bluetooth.
 - WASAPI loopback delivers nothing at all while no application is playing. The
@@ -219,11 +224,12 @@ somewhere else.
 node scripts/check_ring.js
 ```
 
-Runs the jitter buffer through ten minutes of Wi-Fi jitter, a phone at a
-different sample rate, twenty minutes of clock drift, an overflow, a dropout,
-and a phone that skips 1% of its audio blocks. It asserts there are no clicks,
-that the pitch is right, and that the delay does not creep. It takes a few
-seconds and needs nothing installed.
+Runs the buffer and the block scheduler through ten minutes of Wi-Fi jitter, a
+phone at a different sample rate, twenty minutes of clock drift, a flood, a
+dropout, and a phone whose main thread is busy for 250 ms. It asserts there are
+no clicks, that the pitch is right, that the delay does not creep, and that a
+busy moment does not produce a gap. It takes a few seconds and needs nothing
+installed.
 
 ## Licence
 
